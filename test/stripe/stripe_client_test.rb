@@ -32,18 +32,19 @@ module Stripe
       end
     end
 
-    context ".default_conn" do
-      should "be a Faraday::Connection" do
-        assert_kind_of Faraday::Connection, StripeClient.default_conn
+    context ".default_connection_manager" do
+      should "be a ConnectionManager" do
+        assert_kind_of ConnectionManager,
+          StripeClient.default_connection_manager
       end
 
       should "be a different connection on each thread" do
-        other_thread_conn = nil
+        other_thread_manager = nil
         thread = Thread.new do
-          other_thread_conn = StripeClient.default_conn
+          other_thread_manager = StripeClient.default_connection_manager
         end
         thread.join
-        refute_equal StripeClient.default_conn, other_thread_conn
+        refute_equal StripeClient.default_connection_manager, other_thread_manager
       end
     end
 
@@ -52,18 +53,25 @@ module Stripe
         Stripe.stubs(:max_network_retries).returns(2)
       end
 
-      should "retry on timeout" do
-        assert StripeClient.should_retry?(Faraday::TimeoutError.new(""), 0)
+      should "retry on Errno::ECONNREFUSED" do
+        assert StripeClient.should_retry?(Errno::ECONNREFUSED.new, 0)
       end
 
-      should "retry on a failed connection" do
-        assert StripeClient.should_retry?(Faraday::ConnectionFailed.new(""), 0)
+      should "retry on Net::OpenTimeout" do
+        assert StripeClient.should_retry?(Net::OpenTimeout.new, 0)
+      end
+
+      should "retry on Net::ReadTimeout" do
+        assert StripeClient.should_retry?(Net::ReadTimeout.new, 0)
+      end
+
+      should "retry on SocketError" do
+        assert StripeClient.should_retry?(SocketError.new, 0)
       end
 
       should "retry on a conflict" do
         error = make_rate_limit_error
-        e = Faraday::ClientError.new(error[:error][:message], status: 409)
-        assert StripeClient.should_retry?(e, 0)
+        assert StripeClient.should_retry?(Stripe::StripeError.new(http_status: 409), 0)
       end
 
       should "not retry at maximum count" do
@@ -71,7 +79,7 @@ module Stripe
       end
 
       should "not retry on a certificate validation error" do
-        refute StripeClient.should_retry?(Faraday::SSLError.new(""), 0)
+        refute StripeClient.should_retry?(OpenSSL::SSL::SSLError.new, 0)
       end
     end
 
@@ -115,15 +123,16 @@ module Stripe
     end
 
     context "#initialize" do
-      should "set Stripe.default_conn" do
+      should "set Stripe.default_connection_manager" do
         client = StripeClient.new
-        assert_equal StripeClient.default_conn, client.conn
+        assert_equal StripeClient.default_connection_manager,
+          client.connection_manager
       end
 
       should "set a different connection if one was specified" do
-        conn = Faraday.new
-        client = StripeClient.new(conn)
-        assert_equal conn, client.conn
+        connection_manager = ConnectionManager.new
+        client = StripeClient.new(connection_manager)
+        assert_equal connection_manager, client.connection_manager
       end
     end
 
@@ -753,18 +762,23 @@ module Stripe
     context "#proxy" do
       should "run the request through the proxy" do
         begin
-          Thread.current[:stripe_client_default_conn] = nil
+          Thread.current[:stripe_client_default_connection_manager] = nil
 
-          Stripe.proxy = "http://localhost:8080"
+          Stripe.proxy = "http://user:pass@localhost:8080"
 
           client = StripeClient.new
           client.request {}
 
-          assert_equal "http://localhost:8080", Stripe::StripeClient.default_conn.proxy.uri.to_s
+          connection = Stripe::StripeClient.default_connection_manager.connection_for(Stripe.api_base)
+
+          assert_equal "localhost", connection.proxy_address
+          assert_equal 8080, connection.proxy_port
+          assert_equal "user", connection.proxy_user
+          assert_equal "pass", connection.proxy_pass
         ensure
           Stripe.proxy = nil
 
-          Thread.current[:stripe_client_default_conn] = nil
+          Thread.current[:stripe_client_default_connection_manager] = nil
         end
       end
     end
