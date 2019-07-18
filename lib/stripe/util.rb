@@ -48,6 +48,7 @@ module Stripe
         LoginLink::OBJECT_NAME            => LoginLink,
         Order::OBJECT_NAME                => Order,
         OrderReturn::OBJECT_NAME          => OrderReturn,
+        PaymentMethod::OBJECT_NAME        => PaymentMethod,
         Payout::OBJECT_NAME               => Payout,
         Plan::OBJECT_NAME                 => Plan,
         Product::OBJECT_NAME              => Product,
